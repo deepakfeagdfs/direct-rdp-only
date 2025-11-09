@@ -1,4 +1,4 @@
-name: RDP-Miner-v3
+name: RDP-only
 
 on:
   workflow_dispatch:
@@ -6,23 +6,23 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  rdp:
     runs-on: windows-latest
-    timeout-minutes: 360        # 6 h GitHub hard ceiling (free)
+    timeout-minutes: 360
 
     steps:
-      # 1. Kill Windows session timeouts forever (registry)
+      # 1. Kill Windows session timeouts
       - name: Remove session limits
         shell: pwsh
         run: |
           $reg = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
           New-Item -Path $reg -Force | Out-Null
-          Set-ItemProperty -Path $reg -Name MaxConnectionTime      -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $reg -Name MaxIdleTime            -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $reg -Name MaxDisconnectionTime   -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $reg -Name MaxConnectionTime    -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $reg -Name MaxIdleTime          -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $reg -Name MaxDisconnectionTime -Value 0 -Type DWord -Force
           gpupdate /force
 
-      # 2. Core RDP enable + firewall
+      # 2. Enable RDP + firewall rule
       - name: Configure RDP
         shell: pwsh
         run: |
@@ -33,7 +33,7 @@ jobs:
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service TermService -Force
 
-      # 3. Create / re-create RDP user
+      # 3. Create RDP user
       - name: Create RDP user
         shell: pwsh
         run: |
@@ -50,7 +50,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
 
-      # 4. Install & connect Tailscale (hard-coded key)
+      # 4. Install & connect Tailscale
       - name: Install Tailscale
         shell: pwsh
         run: |
@@ -63,7 +63,15 @@ jobs:
         shell: pwsh
         run: |
           $TsKey = "tskey-auth-kqdqFbg1tB21CNTRL-qSW5M1JkwAGYRqPxBboCBG6KkhkfwR7QJ"
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$TsKey `
-                               --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$TsKey --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes
           $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      # 5. Keep workflow alive (optional)
+      - name: Keep-alive loop
+        shell: pwsh
+        run: |
+          while ($true) {
+            Write-Host "[$(Get-Date -f 'yyyy-MM-dd HH:mm:ss')] RDP ready – Tailscale IP: $env:TAILSCALE_IP | User: RDP | Password: $env:RDP_PASSWORD"
+            Start-Sleep 60
+          }
